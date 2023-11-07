@@ -1,11 +1,11 @@
-import pandas as pd
+from src.utils.functions import mkdir_if_not_exists
 from src.utils.bus import BBus
 
 class Network:
     def __init__(self):
+        mkdir_if_not_exists('results/')
         self.h = 0.25
         self.delta = 0.01
-        self.base = 100
         self.ref_bus_i = 0
         self.cost_deficit = 10000
         self.DGER = [{'BARRA': 0, 'CUSTO': 10, 'MAX': 30, 'MIN': 5, 'RAMPA': 10, 'CO2': 90},
@@ -14,10 +14,10 @@ class Network:
 
 
 
-        self.DLIN = [{'DE': 0, 'PARA': 1, 'SUSCEPTANCIA': 33/self.base, 'CONDUTANCIA': 25/self.base, 'LIMITES': 20/self.base},
-                      {'DE': 0, 'PARA': 2, 'SUSCEPTANCIA': 50/self.base, 'CONDUTANCIA': 20/self.base, 'LIMITES': 25/self.base},
-                      {'DE': 0, 'PARA': 2, 'SUSCEPTANCIA': 50/self.base, 'CONDUTANCIA': 20/self.base, 'LIMITES': 25/self.base},
-                      {'DE': 1, 'PARA': 2, 'SUSCEPTANCIA': 50/self.base, 'CONDUTANCIA': 20/self.base, 'LIMITES': 30/self.base}]
+        self.DLIN =  [{'DE': 0, 'PARA': 1, 'SUSCEPTANCIA': 33, 'CONDUTANCIA': 25, 'LIMITES': 20},
+                      {'DE': 0, 'PARA': 2, 'SUSCEPTANCIA': 50, 'CONDUTANCIA': 20, 'LIMITES': 25},
+                      {'DE': 0, 'PARA': 2, 'SUSCEPTANCIA': 50, 'CONDUTANCIA': 20, 'LIMITES': 25},
+                      {'DE': 1, 'PARA': 2, 'SUSCEPTANCIA': 50, 'CONDUTANCIA': 20, 'LIMITES': 30}]
 
         self.DEMANDA = [{'HORA': 0, 'BARRA0': 0, 'BARRA1': 40, 'BARRA2': 30},
                                  {'HORA': 1, 'BARRA0': 0, 'BARRA1': 43, 'BARRA2': 25},
@@ -28,13 +28,14 @@ class Network:
         self.tempDim = [value for value in range(len(self.DEMANDA))]
         self.gerDim = [value for value in range(len(self.DGER))]
 
-        self.fromLin = [value['DE'] for value in self.DLIN]
-        self.toLin = [value['PARA'] for value in self.DLIN]
 
     def minimize(self):
         raise NotImplementedError
 
     def obj_fn(self, model):
+        raise NotImplementedError
+
+    def saveModelDetails(self, name):
         raise NotImplementedError
 
 

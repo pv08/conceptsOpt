@@ -1,4 +1,4 @@
-from pyomo.core.kernel.constraint import constraint
+
 from pyomo.environ import *
 from src.network import Network
 class OptModel(Network):
@@ -7,25 +7,38 @@ class OptModel(Network):
         self.network = Network()
         self.model = ConcreteModel("CustoTermo")
 
-        self.model.EqCons = ConstraintList()
-        self.model.FlowLineLimitCons = ConstraintList()
-        self.model.KirchhoffCons = ConstraintList()
+
+        self.model.pger = Var(self.gerDim, self.tempDim, within=NonNegativeReals, bounds=self.ger_limits)
+        self.model.p_emissao = Var(self.gerDim, self.tempDim, within=NonNegativeReals, bounds=self.ger_limits)
+        self.model.deficit = Var(self.tempDim, within=NonNegativeReals)
+
+        self.model.thetas = Var(self.gerDim, self.tempDim, within=Reals)
+
+
+        #Problem Constraints
+        self.model.consGerEqualDem = ConstraintList()
+        self.model.consTheta = ConstraintList()
+        self.model.consPowerflow = ConstraintList()
+        self.model.consTechnicalLineLimit = ConstraintList()
+        self.model.consUpRamp = ConstraintList()
+        self.model.consDownRamp = ConstraintList()
+
         self.solver = SolverFactory('glpk')
 
 
 
-        self.model.pger = Var(self.gerDim, self.tempDim, within=NonNegativeReals, bounds=self.ger_limits)
-        self.model.thetas = Var(self.gerDim, self.tempDim, within=NonNegativeReals)
-        self.model.powerflow = Var(list(zip(self.fromLin, self.toLin)), self.tempDim)
 
-        self.model.p_emissao = Var(self.gerDim, self.tempDim, within=NonNegativeReals, bounds=self.ger_limits)
-        self.model.deficit = Var(self.tempDim, within=NonNegativeReals)
-
+    def saveModelDetails(self, name):
+        with open(f'results/{name}.txt', 'w') as file:
+            self.model.pprint(ostream=file)
 
 
     def minimize(self):
         self.model.obj = Objective(rule=self.obj_fn, sense=minimize)
         self.createConstraints()
+        self.results = self.solver.solve(self.model, tee=False)
+        print(self.results)
+        self.saveModelDetails(name='CustoTermo')
 
 
     def obj_fn(self, model):
@@ -37,53 +50,46 @@ class OptModel(Network):
                 C_P += (self.network.DGER[k]['CUSTO'] * self.model.pger[ger, temp])
                 #Emissão
                 E_P += (self.network.DGER[k]['CO2'] * self.model.p_emissao[ger, temp])
-            # TODO: {deficits fica aqui?}
             C_P += self.cost_deficit * self.model.deficit[temp]
             E_P += (1 - self.delta) * self.h * E_P
         fob = (self.delta * C_P) + ((1 - self.delta) * self.h * E_P)
         return fob
 
     def createConstraints(self):
+        #Colocar os angulos da barra slack como o
+        for temp in self.tempDim:
+            self.model.consTheta.add(self.model.thetas[self.ref_bus_i, temp] == 0.0)
+
         #Constraint que define que a geração tem que ser igual a demanda
         for t, temp in enumerate(self.tempDim):
             _ger = 0
             for k, ger in enumerate(self.gerDim):
                 _ger += self.model.pger[ger, t]
             _ger += self.model.deficit[t]
-            self.model.EqCons.add(_ger == sum(self.network.DEMANDA[temp][f"BARRA{ger}"] for ger in self.gerDim))
+            self.model.consGerEqualDem.add(_ger == sum(self.network.DEMANDA[temp][f"BARRA{ger}"] for ger in self.gerDim))
 
-        #Define os thetas e acha os fluexo de potência
-        for temp in self.tempDim:
-            thetas = []
-            powerflow = []
-            losses = []
-            for l, line in enumerate(self.bus.b_):
-                summation = 0
-                for cel, ger in zip(line, self.gerDim):
-                    summation += cel * (self.model.pger[ger, temp] - self.DEMANDA[temp][f'BARRA{ger}'])
-                thetas.append(summation)
-            #Define o fluxo de potência de cada linha
-            for conn_i, conn in enumerate(zip(self.fromLin, self.toLin)):
-                k, m = conn
-                flow = (thetas[k] - thetas[m]) / (1/self.DLIN[conn_i]['SUSCEPTANCIA'])
-                powerflow.append({conn: flow})
-                self.model.FlowLineLimitCons.add(flow <= self.DLIN[conn_i]['LIMITES'])
+        #Define os limites das linhas e o fluxo de potência
+        for time, load_data in zip(self.tempDim, self.DEMANDA):
+            for line in self.DLIN:
+                from_bus = line['DE']
+                to_bus = line['PARA']
+                diff_thetas = (self.model.thetas[from_bus, time] - self.model.thetas[to_bus, time])
+                thermal_sum = 0
+                for thermal_idx, thermal_data in enumerate(self.DGER):
+                    if thermal_data['BARRA'] == from_bus:
+                        thermal_sum += self.model.pger[thermal_idx, time]
+
+                load_sum = load_data[f'BARRA{from_bus}']
 
 
-            #Constraint para os fluxos que entram e todos o que saem
-            for bar in self.gerDim:
-                sum_flow = 0
-                #Todos mundo que ta indo
-                for flow in powerflow:
-                    conn = flow.keys()
-                    k, _ = conn
-                    if bar == k:
-                        sum_flow += flow
-                #Todos mundo que ta voltando
-                for flow in powerflow:
-                    conn = flow.keys()
-                    _, m = conn
-                    if bar == m:
-                        sum_flow -= powerflow
-                        #TODO {Colocar a demanda}
-                self.model.KirchhoffCons.add(sum_flow == self.model.pger[bar, temp] - self.DEMANDA[temp][f'BARRA{bar}'])
+                loss = .5*(line['CONDUTANCIA']/2) * diff_thetas
+                power_flow = diff_thetas / (1/line['SUSCEPTANCIA'])
+
+                self.model.consPowerflow.add(thermal_sum - load_sum - loss == power_flow)
+                self.model.consTechnicalLineLimit.add(power_flow <= line['LIMITES'])
+
+        # Define as constraints de rampa
+        for temp in range(1, len(self.tempDim)):
+            for ger in self.gerDim:
+                self.model.consUpRamp.add(self.model.pger[ger, temp] - self.model.pger[ger, temp - 1] <= self.DGER[ger]['RAMPA'])
+                self.model.consDownRamp.add(self.model.pger[ger, temp - 1] - self.model.pger[ger, temp] <= self.DGER[ger]['RAMPA'])
