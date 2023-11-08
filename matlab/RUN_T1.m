@@ -31,9 +31,9 @@ delta=0.9; % fator de ponderação emissão
  % DADOS DE DEMANDA
            %HORA BARRA1  BARRA2  BARRA3
            %  h   (MW)    (MW)    (MW)   
- DEMANDA= [   1     0      1.5*40      1.5*30;
-              2     0      1.5*43      1.5*25;
-              3     0      1.5*25      1.5*25;
+ DEMANDA= [   1     0      40      30;
+              2     0      43      25;
+              3     0      25      25;
               
               0     1       2       3]; % última linha refere-se à posição
 
@@ -366,6 +366,7 @@ xlabel('Hora')
 legend('Gerador 1','Gerador 2','Gerador 3')
 axis([0 4 0 1.1*max(max(Ger))])
 %--------------------------------------
+if max(max(Deficit))>=0.5
 figure(5)
 bar(Deficit)
 title('Custo de Deficit do Sistema x Hora')
@@ -374,7 +375,7 @@ xlabel('Hora')
 legend('Barra 1','Barra 2','Barra 3')
 
 axis([0 4 0 1.1*max(max(Deficit))])
-
+end
 %--------------------------------------
 figure(6)
 bar(C_Ger)
