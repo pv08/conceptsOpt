@@ -44,11 +44,26 @@ NG = length(DGER(:,1)); % Número de Geradores
 
 
 
+%% Processo iterativo de cálculo de perdas
 
-%% Inserção de perdas por meio de uma constante Pperdaskm = gkm(Tetak - Tetam) * CP
+% Linhas do sistema
+IK = zeros(NL,2);
+KI = zeros(NL,2);
 
-          % Perdas k - m   % Perdas m - k
-CP =[[DLIN(:,1:2);[DLIN(:,2) DLIN(:,1)]] 0.005*[DLIN(:,5); DLIN(:,5)]]; 
+for i = 1 : NL
+    IK(i,:) = [DLIN(i,1) DLIN(i,2)];
+    KI(i,:) = [DLIN(i,2) DLIN(i,1)];
+end
+
+orientacao=[IK;KI]; % Matriz para me orientar nas definições das perdas
+
+%-------- Perdas em cada linha, para todos os instantes de tempo
+for i = 1 : length(DEMANDA(:,1))-1
+    Perda(i).Tempo = zeros(NG,1);
+end
+    
+
+for countperdas = 1 : 2
 
 %% OPÇÕES
 itermax = 100000;
@@ -91,10 +106,13 @@ DefI = zeros(1,length(DEMANDA(1,2:end))); % Limite Inferior de Déficit
 %--------------------------------------------------------------------------
 %% Limite para os ângulos
 
-VAngLS = pi* ones(1,NG-1); % Vetor para os limites superiores dos ângulos diferentes de SW
+VAngLS = pi* ones(1,NG); % Vetor para os limites superiores dos ângulos diferentes de SW
 
-VAngLI = -pi* ones(1,NG-1); % Vetor para os limites inferiores dos ângulos diferentes de SW
+VAngLS(1,SW)=0;
 
+VAngLI = -pi* ones(1,NG); % Vetor para os limites inferiores dos ângulos diferentes de SW
+
+VAngLI(1,SW)=0;
 
 %--------------------------------------------------------------------------
 %% RESTRIÇOES DE DESIGUALDADES LINEARES  (A*x <= b)
@@ -156,7 +174,7 @@ Mflu_Original=[[MatFluxoM_KM;MatFluxoM_MK];[MatFluxom_KM;MatFluxom_MK]];
 
 MatFluxo=Mflu_Original;
 
-MatFluxo(:,SW)=[];
+% MatFluxo(:,SW)=[];
 PGflu=zeros(length(MatFluxo(:,1)),NG);
 PDeflu=zeros(length(MatFluxo(:,1)),NG);
 
@@ -173,11 +191,11 @@ clear LimS_KM LimS_MK LimI_KM LimI_MK MatFluxom_MK MatFluxoM_MK
 %% Determinação das Limitações de Rampa
 
 %    |  PG  |    Déficit   |    Teta    |        -P  <= PG(h+1)-PG(h) <= P
-M1 = [zeros(NG) zeros(NG)   zeros(NG,NG-1)];
+M1 = [zeros(NG) zeros(NG)   zeros(NG,NG)];
 
-M2 = [-eye(NG)  zeros(NG)   zeros(NG,NG-1)];
+M2 = [-eye(NG)  zeros(NG)   zeros(NG,NG)];
 
-M3 = [eye(NG)   zeros(NG)   zeros(NG,NG-1)];
+M3 = [eye(NG)   zeros(NG)   zeros(NG,NG)];
 
 MATRIZ1=[];
 for k = 1 : length(DEMANDA(:,1))-1
@@ -200,11 +218,10 @@ clear M1 M2 M3
 
 %% Restrições de Igualdade Lineares  (Aeq*x = beq)
 
-
-%% Restrição de Igualdade PGi + PDefi - sum(Pik) + Pperdasi = PDi
+%% Restrição de Igualdade PGi + PDefi - sum(Pik)= PDi + Pperdasi 
 
 %-------- Fluxo em cada linha
-SomaFluxo=zeros(NG,NG-1);
+SomaFluxo=zeros(NG,NG);
 for i = 1 : NG
     for k = 1 : length(fluxos(:,1))/2
         if fluxos(k,1) == DGER(i,1)
@@ -213,31 +230,20 @@ for i = 1 : NG
     end 
 end
 
-%-------- Perdas em cada linha                  
+% Inserção de Perdas
 
-SomaPerdas=zeros(NG,NG-1);
-for i = 1 : NG
-    for k = 1 : length(fluxos(:,1))/2
-        if fluxos(k,1) == DGER(i,1)
-   
-            % PikTotal      =  Pik           +     CP/2 *  gik *( Bik *(Tetai-Tetak)/Bik)
+SomaPerdas = Perda(TimeD).Tempo;
 
-            SomaPerdas(i,:)= SomaPerdas(i,:) - (CP(k,3)/2)*Gbus(fluxos(k,1),fluxos(k,2))*(MatFluxo(k,:)./BbusLin(fluxos(k,1),fluxos(k,2)));
-        end 
-    end 
-end
 
-%--------------------------------------------------------
-% Inseridas as Perdas
 %           |   PG  |       Déficit         |   Teta   | 
-MatIgualdade=[eye(NG)/Sbase eye(NG)/Sbase SomaFluxo+SomaPerdas];
-Big1=PD';
+MatIgualdade=[eye(NG)/Sbase eye(NG)/Sbase SomaFluxo];
+Big1=PD'-SomaPerdas';
 
-%% Somatório das Potências com os Déficits sum(PG)+sum(Pdef)+sum(Pperdas)=PD
+%% Somatório das Potências com os Déficits sum(PG)+sum(Pdef)=PD+sum(Pperdas)
 
 
-M=[ones(1,NG) ones(1,NG) sum(SomaPerdas)];
-Big2=sum(PD)*Sbase;%sum(DEMANDA(1,2:end));
+M=[ones(1,NG) ones(1,NG) zeros(1,NG)];
+Big2=(sum(PD)-sum(SomaPerdas))*Sbase;%sum(DEMANDA(1,2:end));
 
 clear SomaFluxo MatPG Matfluxos
 
@@ -266,11 +272,11 @@ Aeq=[Aeq;Aeq1];
 
 %% FOB
 %                          PG                    |       PDEf        |    Teta
-    f = [f,delta*DGER(:,6)'+(1-delta)*h*DGER(:,2)'  delta*DGER(:,8)' zeros(1,length(DGER(:,1))-1)]; % Função Objetivo total
+    f = [f,delta*DGER(:,6)'+(1-delta)*h*DGER(:,2)'  delta*DGER(:,8)' zeros(1,length(DGER(:,1)))]; % Função Objetivo total
     
     
-    fcost = [fcost,DGER(:,6)',DGER(:,8)',zeros(1,length(DGER(:,1))-1)];
-    femission = [femission,DGER(:,2)',DGER(:,8)',zeros(1,length(DGER(:,1))-1)]; 
+    fcost = [fcost,DGER(:,6)',DGER(:,8)',zeros(1,length(DGER(:,1)))];
+    femission = [femission,DGER(:,2)',DGER(:,8)',zeros(1,length(DGER(:,1)))]; 
     
     Beq=[Beq,Big1,Big2];
     B_=[B_,LimF];
@@ -284,9 +290,32 @@ B_=[B_,Rampa,Rampa];
 options = optimset('Display', 'iter', 'Algorithm', 'interior-point'); % Defina as opções
 [x,fval,exitflag,output,lambda] = linprog(f, A, B_, Aeq, Beq, lb,ub);
 
-clear LGm DefI VAngLI LGM DefS VAngLS Big2 Big1 LimF i C M MatIgualdade Lines Lines2 Mflu_Original SomaPerdas
+clear LGm DefI VAngLI LGM DefS VAngLS Big2 Big1 LimF i C M MatIgualdade Lines Lines2 Mflu_Original 
 clear Desig_Fluxo A1 Aeq1 Colums Colums2 Des_DEFS Des_GERS Desig_Ang fluxos MatFluxo Linha k MRampa Rampa MATRIZ1
 
+salva(countperdas).cenario=x;
+%% Avaliação das PERDAS
+
+% Para remover as perdas: comentar linhas 306 à 318
+
+%-------- Perdas em cada linha
+
+PerdasAnterior = SomaPerdas;
+
+
+for i = 1 : length(DEMANDA(:,1))-1
+    for m = 1 : NG
+        for k = 1 : length(orientacao(:,1))
+            if orientacao(k,1) == DGER(m,1)
+                SomaPerdas(m,:)= SomaPerdas(m,:) + (1/2)*Gbus(orientacao(k,1),orientacao(k,2))*(x((3*NG)*(i-1)+2*NG+orientacao(k,1))-x((3*NG)*(i-1)+2*NG+orientacao(k,2)))^2;
+            end 
+        end 
+    end
+    Perda(i).Tempo = SomaPerdas;
+end
+
+
+end
 
 %% Análise de Resultados
 
@@ -301,26 +330,25 @@ E_Ger=[];        % Cálculo da Emissão de Cada Gerador por Hora
 for i = 1 : length(DEMANDA(:,1))-1
 
     %                   Custo calculado na hora i
-Custo_Hora=[Custo_Hora fcost(1+(2*NG+NG-1)*(i-1):2*NG+NG-1+(2*NG+NG-1)*(i-1))*x(1+(2*NG+NG-1)*(i-1):2*NG+NG-1+(2*NG+NG-1)*(i-1))];
+Custo_Hora=[Custo_Hora [fcost(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))*salva(1).cenario(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1));...
+                        fcost(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))*salva(2).cenario(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))]];
 
     %                   Emissão calculada na hora i
-Emissao_Hora=[Emissao_Hora femission(1+(2*NG+NG-1)*(i-1):2*NG+NG-1+(2*NG+NG-1)*(i-1))*x(1+(2*NG+NG-1)*(i-1):2*NG+NG-1+(2*NG+NG-1)*(i-1))];
-
-    %                   Demanda na hora i
-Carga=[Carga ;DEMANDA(i,2:end)];
+Emissao_Hora=[Emissao_Hora [femission(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))*salva(1).cenario(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1));...
+                            femission(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))*salva(2).cenario(1+(2*NG+NG)*(i-1):2*NG+NG+(2*NG+NG)*(i-1))]];
 
     %                   Geração total na hora i
-Ger=[Ger; x(1+(2*NG+NG-1)*(i-1):NG+(2*NG+NG-1)*(i-1))'];
+Ger=[Ger; x(1+(2*NG+NG)*(i-1):NG+(2*NG+NG)*(i-1))'];
 
     %                   Custo de Geração de cada gerador na hora i
-C_Ger=[C_Ger; DGER(:,2)'.*x(1+(2*NG+NG-1)*(i-1):NG+(2*NG+NG-1)*(i-1))'];
+C_Ger=[C_Ger; DGER(:,2)'.*x(1+(2*NG+NG)*(i-1):NG+(2*NG+NG)*(i-1))'];
 
     %                   Emissão de cada gerador na hora i
-E_Ger=[E_Ger; DGER(:,6)'.*x(1+(2*NG+NG-1)*(i-1):NG+(2*NG+NG-1)*(i-1))'];
+E_Ger=[E_Ger; DGER(:,6)'.*x(1+(2*NG+NG)*(i-1):NG+(2*NG+NG)*(i-1))'];
 
 
     %                   Déficit de cada barra na hora i
-Deficit=[Deficit; DGER(:,8)'.*x(1+NG+(2*NG+NG-1)*(i-1):NG+NG+(2*NG+NG-1)*(i-1))'];
+Deficit=[Deficit; DGER(:,8)'.*x(1+NG+(2*NG+NG)*(i-1):NG+NG+(2*NG+NG)*(i-1))'];
 end
 
 
@@ -330,32 +358,23 @@ clc
 
 %--------------------------------------
 figure(1)
-bar(Custo_Hora)
+bar3(Custo_Hora)
 title('Custo Total de Geração x Hora')
-ylabel('Custo ($)')
+ylabel('Cenário')
 xlabel('Hora')
-
-axis([0 4 0 1.1*max(Custo_Hora)])
+zlabel('Custo ($)')
+% axis([0 4 0 1.1*max(Custo_Hora)])
 
 
 %--------------------------------------
 figure(2)
-bar(Emissao_Hora)
+bar3(Emissao_Hora)
 title('Emissão Total de CO_2 x Hora')
-ylabel('Emissão (m³)')
+zlabel('Emissão (m³)')
 xlabel('Hora')
+ylabel('Cenário')
+% axis([0 4 0 1.1*max(Emissao_Hora)])
 
-axis([0 4 0 1.1*max(Emissao_Hora)])
-
-
-%--------------------------------------
-figure(3)
-bar(Carga)
-title('Demanda do Sistema x Hora')
-ylabel('Demanda (MW)')
-xlabel('Hora')
-legend('Barra 1','Barra 2','Barra 3')
-axis([0 4 0 1.1*max(max(Carga))])
 
 %--------------------------------------
 figure(4)
@@ -395,3 +414,4 @@ xlabel('Hora')
 legend('Gerador 1','Gerador 2','Gerador 3')
 
 axis([0 4 0 1.1*max(max(E_Ger))])
+% print_tela
